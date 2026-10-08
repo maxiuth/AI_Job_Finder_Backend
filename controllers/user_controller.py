@@ -1,4 +1,4 @@
-import uuis
+import uuid
 from datetime import datetime, timezone
 from models import user_model
 
