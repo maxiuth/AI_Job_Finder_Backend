@@ -1,4 +1,4 @@
-import uuid4
+import uuid
 from datetime import datetime, timezone
 from models import job_model
 

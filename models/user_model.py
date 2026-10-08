@@ -1,4 +1,4 @@
-from config.db import dynamodc, USERS_TABLE
+from config.db import dynamodb, USERS_TABLE
 
 table = dynamodb.Table(USERS_TABLE)
 

@@ -1,4 +1,4 @@
-from config.db import dynamodb, APLLICATIONS_TABLE
+from config.db import dynamodb, APPLICATIONS_TABLE
 
 table = dynamodb.Table(APPLICATIONS_TABLE)
 
