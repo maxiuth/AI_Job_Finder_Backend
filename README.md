@@ -1,142 +1,94 @@
-# JobFit — AI-Powered Job Finder and Matching Platform
+# Job Tracker Backend: Firebase auth
 
-JobFit helps job seekers find relevant openings and understand exactly how well they match each role. It pulls live job listings from an external API, compares them against the user's resume using Google Gemini, and returns a fit score along with actionable feedback and a personalized improvement plan (e.g., certifications, courses, skill gaps to close).
+Firebase handles sign-up, login, password reset and token issuing. This backend never sees a
+password: it only **verifies** the Firebase ID token React sends, then uses the Firebase `uid`
+as the `userId` in DynamoDB.
 
-## Features
+## One-time Firebase setup (free Spark plan is enough)
 
-- **User Authentication** — Secure login/registration with JWT or Firebase OAuth
-- **Job Search** — Search by job title and location, powered by the OpenWebNinja Jobs API
-- **AI Resume Matching** — Each job listing is evaluated against the user's resume using Google Gemini
-- **Detailed Feedback** — For every job, users receive:
-  - A fit/match score
-  - Strengths and gaps relative to the role
-  - A personalized improvement plan (courses, certifications, skills to develop)
-- **Activity Tracking** — Stores jobs viewed and jobs applied to, tied to the user's account
-- **Resume Pre-processing** — Resume is parsed and structured once, then reused for fast comparisons
+1. https://console.firebase.google.com -> create a project.
+2. Build -> Authentication -> Get started -> enable **Email/Password**.
+3. Project settings -> General -> add a **Web app** and copy its config object (for React).
+4. Project settings -> Service accounts -> **Generate new private key**. Save the JSON as
+   `serviceAccountKey.json` in this folder. **Never commit it** (it's in .gitignore).
 
-## Tech Stack
-
-**Frontend**
-
-- React
-
-**Backend**
-
-- Python (Flask / FastAPI — specify which)
-
-**Database**
-
-- Stores: user name, email, password (hashed), jobs viewed, jobs applied
-
-**External Services**
-
-- [OpenWebNinja](https://www.openwebninja.com/) — Job listings API
-- Google Gemini — Resume-to-job fit analysis and feedback generation
-- Firebase OAuth or JWT — Authentication
-
-## Architecture Overview
+## Backend setup
 
 ```
-┌─────────────┐      ┌──────────────┐      ┌────────────────────┐
-│   React     │ ───► │  Python API  │ ───► │  OpenWebNinja API   │
-│  (Frontend) │      │  (Backend)   │      │  (Job Listings)     │
-└─────────────┘      └──────┬───────┘      └────────────────────┘
-                             │
-                             ├──► Google Gemini (Resume ↔ Job Fit Analysis)
-                             │
-                             └──► Database (Users, Viewed/Applied Jobs)
+pip install -r requirements.txt
+docker run -p 8000:8000 amazon/dynamodb-local
+python scripts/setup.py
+uvicorn main:app --reload --port 8080
 ```
 
-**Flow:**
+Docs: http://localhost:8080/docs
 
-1. User registers/logs in (JWT or Firebase OAuth)
-2. User enters desired job title + location
-3. Backend queries OpenWebNinja API for matching listings
-4. Each listing + the user's pre-processed resume is sent to Gemini for evaluation
-5. Backend returns jobs enriched with fit scores, feedback, and improvement plans
-6. User actions (viewed/applied) are logged to the database
+## Flow
 
-## Getting Started
+1. React signs the user up / in with the Firebase JS SDK (no backend call).
+2. React gets the ID token: `await user.getIdToken()`.
+3. React calls `POST /auth/sync` with `Authorization: Bearer <idToken>`. This creates the DynamoDB
+   profile on first login (and returns it on later ones). Call it after every login.
+4. Every other request sends the same header. Backend verifies the token and reads the `uid`.
 
-### Prerequisites
+Public: `/` only. Everything else needs a token. `/users/{user_id}/...` also requires
+`user_id` == the token's uid (else 403). `GET /users/me` returns the current profile.
 
-- Node.js (for the React frontend)
-- Python 3.x (for the backend)
-- API keys for:
-  - OpenWebNinja
-  - Google Gemini
-  - Firebase (if using Firebase OAuth)
+## React usage
 
-### Installation
+```bash
+npm install firebase
+```
 
-1. Clone the repository
+```js
+// firebase.js
+import { initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
 
-   ```bash
-   git clone https://github.com/your-username/jobfit.git
-   cd jobfit
-   ```
+const app = initializeApp({
+  /* config object from the Firebase console */
+});
+export const auth = getAuth(app);
+```
 
-2. **Backend setup**
+```js
+// api.js
+import { auth } from "./firebase";
+const API = "http://localhost:8080";
 
-   ```bash
-   cd backend
-   python -m venv venv
-   source venv/bin/activate   # Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
+export async function api(path, options = {}) {
+  const token = await auth.currentUser.getIdToken(); // auto-refreshes when expired
+  return fetch(`${API}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...options.headers,
+    },
+  });
+}
+```
 
-3. **Frontend setup**
+```js
+// sign up / log in
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+} from "firebase/auth";
 
-   ```bash
-   cd frontend
-   npm install
-   ```
+await createUserWithEmailAndPassword(auth, email, password); // or signInWithEmailAndPassword
+const res = await api("/auth/sync", {
+  method: "POST",
+  body: JSON.stringify({ name }),
+});
+const profile = await res.json();
+```
 
-4. **Environment variables**
+## Notes
 
-   Create a `.env` file in the backend directory:
-
-   ```
-   OPENWEBNINJA_API_KEY=your_key_here
-   GEMINI_API_KEY=your_key_here
-   JWT_SECRET=your_secret_here
-   FIREBASE_CONFIG=your_config_here
-   DATABASE_URL=your_database_url_here
-   ```
-
-5. **Run the app**
-
-   ```bash
-   # Backend
-   cd backend
-   python app.py
-
-   # Frontend (in a separate terminal)
-   cd frontend
-   npm start
-   ```
-
-## Database Schema (Draft)
-
-| Table          | Fields                                              |
-| -------------- | --------------------------------------------------- |
-| `users`        | id, name, email, password_hash, created_at          |
-| `jobs_viewed`  | id, user_id, job_id, job_title, company, viewed_at  |
-| `jobs_applied` | id, user_id, job_id, job_title, company, applied_at |
-
-## Security
-
-- Passwords are hashed before storage (never stored in plain text)
-- Authentication via JWT or Firebase OAuth
-- API keys and secrets stored in environment variables, never committed to source control
-- HTTPS enforced in production
-
-## Roadmap
-
-- [ ] User authentication (JWT / Firebase OAuth)
-- [ ] Resume upload and pre-processing pipeline
-- [ ] OpenWebNinja API integration
-- [ ] Gemini-based fit scoring and feedback generation
-- [ ] Jobs viewed/applied tracking
-- [ ] Frontend UI for search, results, and feedback display
-- [ ] Deployment
+- Firebase ID tokens expire after 1 hour; the SDK refreshes them for you (`getIdToken()`).
+- Verifying a token needs internet access on the backend (it fetches Google's public keys, then caches them).
+  For fully offline dev, look into the Firebase Auth Emulator.
+- Deleting a user here removes only the DynamoDB profile, not the Firebase account.
+- Any logged-in user can `POST /jobs`. Add an admin check (Firebase custom claims) if needed.
+- You can require verified emails by rejecting tokens where `email_verified` is false.
