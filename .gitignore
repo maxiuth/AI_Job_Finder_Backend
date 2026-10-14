@@ -1,18 +1,11 @@
-# Python bytecode
 __pycache__/
 *.pyc
-
-# Environment / secrets
 .env
-
-# Virtual environments
 venv/
 .venv/
-
-# Local DynamoDB data (if you use the persistent Docker volume)
 dynamodb-data/
-
-# OS / editor files
+*firebase*adminsdk*.json
+serviceAccountKey.json
 .DS_Store
 .idea/
 .vscode/
