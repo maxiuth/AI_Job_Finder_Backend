@@ -1,18 +1,39 @@
-# setup.py
+"""
+Creates the local DynamoDB tables and seeds sample JOBS.
+
+Users are NOT seeded: a user's id is their Firebase uid, which only exists after you
+sign up through Firebase. Create a test account from your React app (or the Firebase
+console), then call POST /auth/sync to create the matching DynamoDB profile.
+
+Usage (from the backend folder), with DynamoDB Local running:
+    python scripts/setup.py
+    python scripts/setup.py --reset    # delete all tables first
+"""
+
+import os
+import sys
 import uuid
 from datetime import datetime, timezone
 
-import boto3
-from botocore.exceptions import ClientError
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-dynamodb = boto3.resource(
-    "dynamodb",
-    region_name="us-east-1",
-    endpoint_url="http://localhost:8000",
-    aws_access_key_id="fake",
-    aws_secret_access_key="fake",
-)
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from config.db import dynamodb, USERS_TABLE, JOBS_TABLE, APPLICATIONS_TABLE, VIEWED_JOBS_TABLE
+
 client = dynamodb.meta.client
+ALL_TABLES = [USERS_TABLE, JOBS_TABLE, APPLICATIONS_TABLE, VIEWED_JOBS_TABLE]
+
+
+def reset_tables():
+    existing = client.list_tables()["TableNames"]
+    for name in ALL_TABLES:
+        if name in existing:
+            dynamodb.Table(name).delete()
+            dynamodb.Table(name).wait_until_not_exists()
+            print(f"Deleted {name}")
 
 
 def create_tables():
@@ -20,17 +41,17 @@ def create_tables():
 
     table_defs = [
         {
-            "TableName": "Users",
+            "TableName": USERS_TABLE,  # key = Firebase uid (no email index needed: Firebase handles login)
             "AttributeDefinitions": [{"AttributeName": "userId", "AttributeType": "S"}],
             "KeySchema": [{"AttributeName": "userId", "KeyType": "HASH"}],
         },
         {
-            "TableName": "Jobs",
+            "TableName": JOBS_TABLE,
             "AttributeDefinitions": [{"AttributeName": "jobId", "AttributeType": "S"}],
             "KeySchema": [{"AttributeName": "jobId", "KeyType": "HASH"}],
         },
         {
-            "TableName": "Applications",
+            "TableName": APPLICATIONS_TABLE,
             "AttributeDefinitions": [
                 {"AttributeName": "userId", "AttributeType": "S"},
                 {"AttributeName": "jobId", "AttributeType": "S"},
@@ -51,7 +72,7 @@ def create_tables():
             ],
         },
         {
-            "TableName": "ViewedJobs",
+            "TableName": VIEWED_JOBS_TABLE,
             "AttributeDefinitions": [
                 {"AttributeName": "userId", "AttributeType": "S"},
                 {"AttributeName": "jobId", "AttributeType": "S"},
@@ -68,56 +89,23 @@ def create_tables():
         if name in existing:
             print(f"{name} already exists, skipping.")
             continue
-
         dynamodb.create_table(**definition, BillingMode="PAY_PER_REQUEST")
         dynamodb.Table(name).wait_until_exists()
         print(f"Created {name}")
 
 
-def seed():
-    users_table = dynamodb.Table("Users")
-    jobs_table = dynamodb.Table("Jobs")
-    applications_table = dynamodb.Table("Applications")
-    viewed_table = dynamodb.Table("ViewedJobs")
-
-    user_id = str(uuid.uuid4())
-    job_ids = [str(uuid.uuid4()) for _ in range(3)]
-    job_titles = ["Frontend Engineer", "Backend Engineer", "Product Designer"]
-
-    users_table.put_item(Item={
-        "userId": user_id,
-        "email": "alice@example.com",
-        "name": "Alice",
-        "createdAt": datetime.now(timezone.utc).isoformat(),
-    })
-
-    for job_id, title in zip(job_ids, job_titles):
-        jobs_table.put_item(Item={
-            "jobId": job_id,
-            "title": title,
-            "company": "Acme Co",
-            "postedAt": datetime.now(timezone.utc).isoformat(),
+def seed_jobs():
+    now = datetime.now(timezone.utc).isoformat()
+    for title in ["Frontend Engineer", "Backend Engineer", "Product Designer"]:
+        job_id = str(uuid.uuid4())
+        dynamodb.Table(JOBS_TABLE).put_item(Item={
+            "jobId": job_id, "title": title, "company": "Acme Co", "postedAt": now,
         })
-
-    # Alice viewed all three
-    for job_id in job_ids:
-        viewed_table.put_item(Item={
-            "userId": user_id,
-            "jobId": job_id,
-            "viewedAt": datetime.now(timezone.utc).isoformat(),
-        })
-
-    # Alice applied to the first one
-    applications_table.put_item(Item={
-        "userId": user_id,
-        "jobId": job_ids[0],
-        "status": "applied",
-        "appliedAt": datetime.now(timezone.utc).isoformat(),
-    })
-
-    print("Seeded data. Test userId:", user_id)
+        print(f"Seeded job: {title} ({job_id})")
 
 
 if __name__ == "__main__":
+    if "--reset" in sys.argv:
+        reset_tables()
     create_tables()
-    seed()
+    seed_jobs()
